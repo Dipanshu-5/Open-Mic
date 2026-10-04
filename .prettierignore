@@ -1,0 +1,8 @@
+node_modules
+.next
+.npm-cache
+.demo
+package-lock.json
+AGENTS.md
+CLAUDE.md
+supabase

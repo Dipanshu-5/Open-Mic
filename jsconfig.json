@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "strict": true,
+    "noEmit": true,
+    "target": "ES2022",
+    "lib": ["DOM", "DOM.Iterable", "ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "app/**/*.js",
+    "app/**/*.jsx",
+    "components/**/*.jsx",
+    "lib/**/*.js",
+    "instrumentation.js",
+    "next.config.mjs",
+    "tests/**/*.js"
+  ],
+  "exclude": ["node_modules", ".next"]
+}
