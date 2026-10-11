@@ -71,8 +71,30 @@ export function BookingFlow({
   const [challenge, setChallenge] = useState('');
   const formRef = useRef(/** @type {HTMLFormElement|null} */ (null));
   const keyRef = useRef('');
+  const tokenRef = useRef('');
+  const attemptRef = useRef(/** @type {Record<string,unknown>|null} */ (null));
+  const [hasAttempt, setHasAttempt] = useState(false);
+  function resetAttempt() {
+    keyRef.current = crypto.randomUUID();
+    tokenRef.current = btoa(
+      String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))),
+    )
+      .replaceAll('+', '-')
+      .replaceAll('/', '_')
+      .replaceAll('=', '');
+    attemptRef.current = null;
+    setHasAttempt(false);
+    setChallenge('');
+    Reflect.get(window, 'turnstile')?.reset();
+  }
   useEffect(() => {
     keyRef.current = crypto.randomUUID();
+    tokenRef.current = btoa(
+      String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))),
+    )
+      .replaceAll('+', '-')
+      .replaceAll('/', '_')
+      .replaceAll('=', '');
   }, []);
   useEffect(() => {
     Reflect.set(
@@ -100,7 +122,6 @@ export function BookingFlow({
         if (!response.ok) throw new Error(result.error);
         if (active) {
           setSlots(slotsSchema.parse(result).slots);
-          setError('');
         }
       } catch (reason) {
         if (active) setError(friendlyError(reason));
@@ -215,26 +236,48 @@ export function BookingFlow({
     try {
       let checkout = hold;
       if (!checkout) {
+        // Retain the capability and original input across ambiguous network failures.
+        attemptRef.current ||= {
+          planId,
+          startTime: selected,
+          ...details,
+          phone: String(form.get('phone') || ''),
+          whatsappOptIn: form.get('whatsapp') === 'on',
+          consent: {
+            adult: form.get('adult') === 'on',
+            terms: form.get('terms') === 'on',
+            privacy: form.get('privacy') === 'on',
+          },
+          turnstileToken: challenge,
+          requestKey: keyRef.current,
+          retryToken: tokenRef.current,
+        };
+        setHasAttempt(true);
         checkout = holdSchema.parse(
-          await jsonRequest('/api/bookings/start', {
-            planId,
-            startTime: selected,
-            ...details,
-            phone: String(form.get('phone') || ''),
-            whatsappOptIn: form.get('whatsapp') === 'on',
-            consent: {
-              adult: form.get('adult') === 'on',
-              terms: form.get('terms') === 'on',
-              privacy: form.get('privacy') === 'on',
-            },
-            turnstileToken: challenge,
-            requestKey: keyRef.current,
-          }),
+          await jsonRequest('/api/bookings/start', attemptRef.current),
         );
         setHold(checkout);
       }
       openCheckout(checkout, details);
     } catch (reason) {
+      if (
+        reason instanceof Error &&
+        [
+          'checkout_failed',
+          'booking_expired',
+          'slot_unavailable',
+          'request_conflict',
+          'challenge_failed',
+          'invalid_input',
+        ].includes(reason.message)
+      ) {
+        resetAttempt();
+        if (
+          reason.message === 'booking_expired' ||
+          reason.message === 'slot_unavailable'
+        )
+          setSelected('');
+      }
       setError(friendlyError(reason));
       setReload((value) => value + 1);
     } finally {
@@ -266,7 +309,7 @@ export function BookingFlow({
       setHold(null);
       setSelected('');
       setDemoCheckout(false);
-      keyRef.current = crypto.randomUUID();
+      resetAttempt();
       setReload((value) => value + 1);
       setError('');
     } catch (reason) {
@@ -288,7 +331,7 @@ export function BookingFlow({
         <h2>Choose how you’d like to talk.</h2>
         <div className="mode-selector" role="group" aria-label="Call mode">
           <button
-            disabled={Boolean(hold)}
+            disabled={busy || hasAttempt || Boolean(hold)}
             type="button"
             aria-pressed={plan.mode === 'video'}
             onClick={() => {
@@ -300,7 +343,7 @@ export function BookingFlow({
             Video call
           </button>
           <button
-            disabled={Boolean(hold)}
+            disabled={busy || hasAttempt || Boolean(hold)}
             type="button"
             aria-pressed={plan.mode === 'audio'}
             onClick={() => {
@@ -324,7 +367,7 @@ export function BookingFlow({
         >
           {PLANS.filter((item) => item.mode === plan.mode).map((item) => (
             <button
-              disabled={Boolean(hold)}
+              disabled={busy || hasAttempt || Boolean(hold)}
               type="button"
               key={item.id}
               aria-pressed={item.id === planId}
@@ -347,7 +390,7 @@ export function BookingFlow({
           {Array.from({ length: 10 }, (_, index) => dateKey(index)).map(
             (day) => (
               <button
-                disabled={Boolean(hold)}
+                disabled={busy || hasAttempt || Boolean(hold)}
                 type="button"
                 key={day}
                 aria-pressed={day === date}
@@ -373,7 +416,7 @@ export function BookingFlow({
             value={date}
             min={dateKey(0)}
             max={dateKey(30)}
-            disabled={Boolean(hold)}
+            disabled={busy || hasAttempt || Boolean(hold)}
             onChange={(event) => {
               if (event.target.value) {
                 setDate(event.target.value);
@@ -395,7 +438,7 @@ export function BookingFlow({
           ) : (
             slots.map((slot) => (
               <button
-                disabled={Boolean(hold)}
+                disabled={busy || hasAttempt || Boolean(hold)}
                 type="button"
                 key={slot.start_time}
                 aria-pressed={selected === slot.start_time}
@@ -423,7 +466,7 @@ export function BookingFlow({
         <span className="eyebrow">03 · YOUR DETAILS</span>
         <h2>A few details, then you’re set.</h2>
         <form ref={formRef} onSubmit={submit} className="guest-form">
-          <fieldset disabled={busy || Boolean(hold)}>
+          <fieldset disabled={busy || hasAttempt || Boolean(hold)}>
             <label>
               Your name
               <input name="name" autoComplete="name" required maxLength={100} />
@@ -532,7 +575,8 @@ export function BookingFlow({
               busy ||
               !selected ||
               (Boolean(hold) && seconds === 0) ||
-              (mode === 'live' && (!checkoutReady || (!hold && !challenge)))
+              (mode === 'live' &&
+                (!checkoutReady || (!hold && !hasAttempt && !challenge)))
             }
           >
             {busy

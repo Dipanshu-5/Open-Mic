@@ -1,0 +1,11 @@
+{
+  "name": "booking-review-tools",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@axe-core/playwright": "4.13.0",
+    "@vitest/coverage-v8": "5.0.3",
+    "lighthouse": "12.8.2",
+    "playwright": "1.64.0"
+  }
+}
