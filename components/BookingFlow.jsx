@@ -14,6 +14,7 @@ import {
 import { PLANS, getPlan } from '../lib/config.js';
 import { formatMoney } from '../lib/money.js';
 import { jsonRequest, friendlyError } from '../lib/client-api.js';
+import { upiCheckoutOptions } from '../lib/checkout.js';
 
 const slotsSchema = z.object({
   slots: z.array(z.object({ start_time: z.string(), end_time: z.string() })),
@@ -160,7 +161,7 @@ export function BookingFlow({
     return () => clearInterval(timer);
   }, [hold]);
 
-  /** @param {z.infer<typeof holdSchema>} checkout @param {Record<string,string>} details */
+  /** @param {z.infer<typeof holdSchema>} checkout @param {{name:string,email:string}} details */
   function openCheckout(checkout, details) {
     if (mode === 'demo') {
       setDemoCheckout(true);
@@ -172,27 +173,7 @@ export function BookingFlow({
       return;
     }
     const widget = new Razorpay({
-      key: checkout.keyId,
-      order_id: checkout.orderId,
-      amount: checkout.amount,
-      currency: 'INR',
-      name: 'Conversation session',
-      timeout: Math.min(
-        540,
-        Math.max(
-          1,
-          Math.floor(
-            (new Date(checkout.holdExpiresAt).getTime() - Date.now()) / 1000,
-          ) - 5,
-        ),
-      ),
-      prefill: { name: details.name, email: details.email },
-      config: {
-        display: {
-          sequence: ['upi', 'card', 'netbanking', 'wallet'],
-          preferences: { show_default_blocks: true },
-        },
-      },
+      ...upiCheckoutOptions(checkout, details),
       handler: async (
         /** @type {{razorpay_payment_id:string,razorpay_signature:string}} */ response,
       ) => {
@@ -582,8 +563,10 @@ export function BookingFlow({
             {busy
               ? 'Processing…'
               : hold
-                ? 'Retry payment'
-                : `${mode === 'demo' ? 'Simulate payment' : 'Pay'} ${formatMoney(plan.amountInPaise)}`}
+                ? mode === 'demo'
+                  ? 'Retry payment'
+                  : 'Retry UPI payment'
+                : `${mode === 'demo' ? 'Simulate payment' : 'Pay with UPI'} ${formatMoney(plan.amountInPaise)}`}
             <ArrowRight size={18} aria-hidden="true" />
           </button>
           {hold && (
@@ -599,6 +582,10 @@ export function BookingFlow({
           {!selected && (
             <p className="field-hint">Choose an available time to continue.</p>
           )}
+          <p className="field-hint">
+            UPI payments only. Approve in your UPI app on mobile, or scan the
+            checkout QR code using your UPI app on desktop.
+          </p>
           <p className="payment-note">
             <LockKeyhole size={14} aria-hidden="true" />
             Full refund for guest cancellations at least 24 hours before start.
